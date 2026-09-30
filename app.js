@@ -65,7 +65,7 @@ function processRow(row,fileName){
  const node=String(val(row,['NODE','SITE','ORIGEM NODE']));
  let nodeCity='',nodeAlert='';
  if(client==='AMAZON'&&node){const n=state.nodes.find(x=>compact(x.NODE||x.Node||x.node)===compact(node));if(n){nodeCity=(n.CIDADE||n.Cidade||n.city)+' - '+(n.UF||n.Uf||n.uf)}else nodeAlert='NODE_AMAZON_NAO_MAPEADO'}
- let table=findFreight(client,op,origin,dest,typology,serviceText(row));
+ let table=findFreight(client,op.op,origin,dest,typology,serviceText(row));
  let result=op==='ANALISE'?'BLOQUEIO':nodeAlert?'BLOQUEIO':table.code?'CLASSIFICADO':'BLOQUEIO';
  return {...row,CLIENTE:client,ID_VIAGEM:trip,MINUTA:minute,OPERACAO:op.op,REGRA:op.reason,ORIGEM_NORMALIZADA:origin,DESTINO_NORMALIZADO:dest,TIPOLOGIA_RAW:rawType,TIPOLOGIA_NORMALIZADA:typology,NODE:node,NODE_CIDADE_UF:nodeCity,TABELA_ESPERADA:table.code,TABELAS_ALTERNATIVAS:table.alt||'',RESULTADO:result,MINUTA_STATUS:minute?'PENDENTE_REVALIDACAO':'MINUTA_PENDENTE',MOTIVO:nodeAlert||(!table.code?'TABELA_NAO_LOCALIZADA':'OK'),ARQUIVO_ORIGEM:fileName};
 }
