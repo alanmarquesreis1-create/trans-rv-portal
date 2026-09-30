@@ -25,8 +25,9 @@ function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show'
 function audit(action,detail){state.history.unshift({data:new Date().toLocaleString('pt-BR'),acao:action,detalhe:detail});state.history=state.history.slice(0,300);save('history',state.history);renderHistory()}
 function setView(id){$$('.view').forEach(v=>v.classList.toggle('active',v.id===id));$$('.nav').forEach(b=>b.classList.toggle('active',b.dataset.view===id));render()}
 $$('.nav').forEach(b=>b.onclick=()=>setView(b.dataset.view));
-function readFile(file){return file.arrayBuffer().then(buf=>{const wb=XLSX.read(buf,{type:'array',cellDates:false});const sheets=wb.SheetNames;return {name:file.name,sheets,data:XLSX.utils.sheet_to_json(wb.Sheets[sheets[0]],{defval:''})}})}
-function fileClient(name,rows){const s=norm(name+' '+Object.keys(rows[0]||{}).join(' '));if(s.includes('AMAZON')||s.includes('RELAY'))return 'AMAZON';if(s.includes('MERCADO LIVRE')||s.includes('MELI')||s.includes('MONITOING BILLING'))return 'MERCADO LIVRE';if(s.includes('SHOPEE'))return 'SHOPEE';return 'OUTRO'}
+function readFile(file){return file.arrayBuffer().then(buf=>{const wb=XLSX.read(buf,{type:'array',cellDates:false});const sheets=wb.SheetNames;const ws=wb.Sheets[sheets[0]];const matrix=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:true});const tokens=['CODIGO','CNPJ','NOME DA TABELA','TIPO VEICULO','STATUS','MINUTA','LH TRIP','ID DA VIAGEM','SUBTRANSPORTADORA','CONTA DO EXPEDIDOR','NODE','CIDADE','UF','SERVICO','SERVIÇO','TRAVEL ID','ROTA','ORIGEM','DESTINO'];let headerIndex=0,best=-1;for(let i=0;i<Math.min(matrix.length,15);i++){const row=matrix[i].map(v=>norm(v));const score=tokens.reduce((n,t)=>n+(row.some(v=>v===t||v.includes(t))?1:0),0);if(score>best){best=score;headerIndex=i}}const rawHeaders=matrix[headerIndex]||[];const headers=rawHeaders.map((h,i)=>{const s=String(h??'').trim();return s||('COLUNA_'+(i+1))});const data=matrix.slice(headerIndex+1).filter(r=>r.some(v=>String(v??'').trim()!=='')).map(r=>Object.fromEntries(headers.map((h,i)=>[h,r[i]??''])));return {name:file.name,sheets,headerIndex,headers,data}})}
+function detectFileRole(name,rows){const s=norm(name+' '+Object.keys(rows[0]||{}).join(' '));const keys=Object.keys(rows[0]||{}).map(norm);const has=t=>keys.some(k=>k===t||k.includes(t));if(has('CODIGO')&&has('NOME DA TABELA')&&has('TIPO VEICULO'))return 'FREIGHT';if(has('MINUTA')||has('NUMERO MINUTA')||has('CODIGO TABELA'))return 'MINUTES';if(has('NODE')&&has('CIDADE')&&has('UF'))return 'NODES';if(s.includes('RELAY')||has('SUBTRANSPORTADORA')&&has('CONTA DO EXPEDIDOR')&&has('ID DA VIAGEM'))return 'AMAZON_FINAL';if(s.includes('AMAZON')||has('TIPO DE SERVICO')&&has('ID DA CARGA'))return 'AMAZON_DEMANDA';if(s.includes('MONITOING BILLING')||has('ROSTERING ID')&&has('TRANSPORTADOR')&&has('SERVICO'))return 'MELI_FINAL';if(s.includes('MERCADO LIVRE')||has('TRAVEL ID')&&has('SERVICO')&&has('PARCEIRO'))return 'MELI_DEMANDA';if(s.includes('SHOPEE')||has('LH TRIP')&&has('3PL')&&has('ENDERECO ORIGEM'))return 'SHOPEE_DEMANDA';return 'DEMANDA'}
+function fileClient(name,rows){const role=detectFileRole(name,rows);if(role.startsWith('AMAZON'))return 'AMAZON';if(role.startsWith('MELI'))return 'MERCADO LIVRE';if(role.startsWith('SHOPEE'))return 'SHOPEE';return 'OUTRO'}
 function val(row,aliases){const keys=Object.keys(row);for(const a of aliases){const na=norm(a);const k=keys.find(x=>norm(x)===na);if(k)return row[k]}for(const a of aliases){const na=compact(a);const k=keys.find(x=>compact(x).includes(na));if(k)return row[k]}return ''}
 function locality(raw){const n=norm(raw).replace(/Á/g,'A');const pair=cfg.localities.find(x=>norm(x[0])===n);return pair?pair[1]:n}
 function typeMap(raw){const n=norm(raw);const p=cfg.types.find(x=>norm(x[0])===n);return p?p[1]:n||''}
@@ -99,12 +100,21 @@ function applyMinutes(){
 function analyze(){
  if(!state.files.length)return toast('Selecione os arquivos primeiro.');
  Promise.all(state.files.map(readFile)).then(results=>{
-  state.rows=[];state.minutes=[];let demand=0;
-  results.forEach(x=>{const kind=norm(x.name).includes('MINUTA')||norm(x.name).includes('RELACAOMINUT')?'minutes':norm(x.name).includes('TABELA')?'freight':null;
-   if(kind==='minutes'){state.minutes.push(...x.data);return} if(kind==='freight'){state.freight=x.data;return}
-   demand+=x.data.length;x.data.forEach(r=>state.rows.push(processRow(r,x.name)));
+  state.rows=[];state.minutes=[];state.freight=[];state.outside=[];state.treatments=[];
+  let demand=0,summary=[];
+  results.forEach(x=>{
+   const role=detectFileRole(x.name,x.data);summary.push(x.name+' → '+role);
+   if(role==='MINUTES'){state.minutes.push(...x.data);return}
+   if(role==='FREIGHT'){state.freight.push(...x.data);return}
+   if(role==='NODES'){state.nodes=x.data;return}
+   if(role==='AMAZON_DEMANDA'&&results.some(y=>detectFileRole(y.name,y.data)==='AMAZON_FINAL'))return;
+   if(role==='MELI_DEMANDA'&&results.some(y=>detectFileRole(y.name,y.data)==='MELI_FINAL'))return;
+   if(role.endsWith('_FINAL')||role.endsWith('_DEMANDA')||role==='SHOPEE_DEMANDA'||role==='DEMANDA'){
+    demand+=x.data.length;
+    x.data.forEach(r=>state.rows.push(processRow(r,x.name)));
+   }
   });
-  applyMinutes();const now=new Date();$('#periodBadge').textContent=now.toLocaleDateString('pt-BR',{month:'2-digit',day:'2-digit'});save('rows',state.rows);save('minutes',state.minutes);save('freight',state.freight);audit('ANALISE',demand+' registros processados');toast('Análise concluída');render();
+  applyMinutes();const now=new Date();$('#periodBadge').textContent=now.toLocaleDateString('pt-BR',{month:'2-digit',day:'2-digit'});save('rows',state.rows);save('minutes',state.minutes);save('freight',state.freight);save('nodes',state.nodes);audit('ANALISE',demand+' registros processados • '+summary.join(' | '));toast('Análise concluída');render();
  }).catch(e=>{console.error(e);toast('Erro ao ler arquivo: '+e.message)});
 }
 function table(el,rows,limit=500){
