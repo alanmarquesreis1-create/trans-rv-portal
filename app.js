@@ -70,20 +70,25 @@ function processRow(row,fileName){
  return {...row,CLIENTE:client,ID_VIAGEM:trip,MINUTA:minute,OPERACAO:op.op,REGRA:op.reason,ORIGEM_NORMALIZADA:origin,DESTINO_NORMALIZADO:dest,TIPOLOGIA_RAW:rawType,TIPOLOGIA_NORMALIZADA:typology,NODE:node,NODE_CIDADE_UF:nodeCity,TABELA_ESPERADA:table.code,TABELAS_ALTERNATIVAS:table.alt||'',RESULTADO:result,MINUTA_STATUS:minute?'PENDENTE_REVALIDACAO':'MINUTA_PENDENTE',MOTIVO:nodeAlert||(!table.code?'TABELA_NAO_LOCALIZADA':'OK'),ARQUIVO_ORIGEM:fileName};
 }
 function serviceText(row){return norm(val(row,['ROTA','SERVICO','SERVIÇO','SERVICE','NOME DA TABELA','SERVICE NAME']))}
+function freightClientMatches(raw,client){const c=norm(raw);if(!c)return true;const groups={AMAZON:['AMAZON LOGISTICA DO BRASIL LTDA','AMAZON SERVICOS DE VAREJO DO BRASIL LTDA'],MERCADO LIVRE:['EBAZAR.COM.BR.LTDA'],SHOPEE:['SHPX LOGISTICA LTDA','SHPX LOGISTICA LTDA.']};return (groups[client]||[client]).some(x=>c===norm(x))}
+function operationTableMatches(name,op,service){const n=norm(name);if(!op||op==='ANALISE')return true;if(op==='OPB')return /^OPB\\b/.test(n);if(op==='RTP')return /^RTP\\b/.test(n);if(op==='LH')return /^LH\\b/.test(n);if(op==='CPL')return /^CPL\\b/.test(n);if(op==='MULTISTOP')return n.includes('MULT');if(op==='LINE_HAUL')return /^LH\\b/.test(n);if(op.startsWith('DEDICADO ')){const family=op.split(' ')[1];return n.includes('DED')&&n.includes('C'+family)}return false}
 function findFreight(client,op,origin,dest,type,service){
  if(!state.freight.length)return {code:'',alt:''};
+ const today=new Date();
  const cand=state.freight.filter(r=>{
-  const c=norm(r.CLIENTE||r.Cliente||r.client);const ro=norm(r['CIDADE ORIGEM']||r.ORIGEM||r.CidadeOrigem);const rd=norm(r['CIDADE DESTINO']||r.DESTINO||r.CidadeDestino);const rt=norm(r['TIPO VEICULO']||r['TIPO VEÍCULO']||r.TIPOLOGIA||r['Tipo Veículo']);const name=norm(r['NOME DA TABELA']||r['Nome da Tabela']||r.NOME||r.TABELA);
-  if(c&&client&&c!==client)return false;
+  const rawClient=r.CLIENTE||r.Cliente||r.client;const ro=norm(r['CIDADE ORIGEM']||r.ORIGEM||r.CidadeOrigem);const rd=norm(r['CIDADE DESTINO']||r.DESTINO||r.CidadeDestino);const rt=norm(r['TIPO VEICULO']||r['TIPO VEÍCULO']||r.TIPOLOGIA||r['Tipo Veículo']);const name=norm(r['NOME DA TABELA']||r['Nome da Tabela']||r.NOME||r.TABELA);const status=norm(r.STATUS||r.Status);const expiry=String(r['DATA VALIDADE']||r['Data Validade']||'');
+  if(!freightClientMatches(rawClient,client))return false;
   if(ro&&origin&&locality(ro)!==origin)return false;
   if(rd&&dest&&locality(rd)!==dest)return false;
   if(rt&&type&&!rt.includes(type))return false;
-  if(op&&op!=='ANALISE'&&!name.includes(norm(op).replace('DEDICADO ','DED'))&&!name.includes(norm(op)))return false;
-  if(op.startsWith('DEDICADO ')&&service&&!name.includes(service.split('.')[0]))return false;
+  if(status&&status!=='ATIVO')return false;
+  if(expiry){const m=expiry.match(/(\\d{2})[\\/.-](\\d{2})[\\/.-](\\d{4})/);if(m&&new Date(+m[3],+m[2]-1,+m[1])<today)return false;}
+  if(!operationTableMatches(name,op,service))return false;
+  if(op.startsWith('DEDICADO ')&&service){const family=op.split(' ')[1];if(!service.includes('C'+family))return false;}
   return true;
  });
  cand.sort((a,b)=>Number(a.CODIGO||a.Código||a.CODIGO_TABELA||999999)-Number(b.CODIGO||b.Código||b.CODIGO_TABELA||999999));
- const codes=[...new Set(cand.map(r=>String(r.CODIGO||r.Código||r.CODIGO_TABELA||r.codigo||'' )).filter(Boolean))];
+ const codes=[...new Set(cand.map(r=>String(r.CODIGO||r.Código||r.CODIGO_TABELA||r.codigo||'')).filter(Boolean))];
  return {code:codes[0]||'',alt:codes.slice(1).join(',')};
 }
 function applyMinutes(){
